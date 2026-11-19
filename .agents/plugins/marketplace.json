@@ -1,0 +1,10 @@
+{
+  "name": "wiki-toolkit-local",
+  "interface": {"displayName": "Wiki Toolkit"},
+  "plugins": [
+    {
+      "name": "wiki-toolkit",
+      "source": {"source": "local", "path": "./plugins/wiki-toolkit"}
+    }
+  ]
+}

@@ -1,28 +1,55 @@
 # Wiki Toolkit
 
-Wiki Toolkit is a work in progress for setting up and maintaining a project wiki in Codex. The toolkit will ship reusable templates, skills, setup and upgrade tools, and a local Model Context Protocol (MCP) server. Each project will use its own wiki checkout to store its knowledge.
+Wiki Toolkit sets up a project Markdown wiki for Codex. Version 0.1.0 includes a setup skill and a local, read-only Model Context Protocol (MCP) server. Each project keeps its wiki files in its own `.wiki/` directory.
 
-## Status
+## Install on Windows
 
-This repository is in initial setup. Install commands will be published after the first release is tested in a separate project.
+Use a recent Codex CLI with `codex plugin` support and Python 3.11 or newer. Extract the release or check out the toolkit in a directory you can keep in place. Run these PowerShell commands from that directory, substituting your project path.
 
-## What lives where
+```powershell
+$toolkit = (Get-Location).Path
+$project = (Resolve-Path 'C:\path\to\your-project').Path
+codex plugin marketplace add "$toolkit"
+codex plugin add wiki-toolkit@wiki-toolkit-local
+python -m venv "$toolkit/.venv"
+$python = Join-Path $toolkit '.venv/Scripts/python.exe'
+$plugin = Join-Path $toolkit 'plugins/wiki-toolkit'
+& $python -m pip install -r "$plugin/requirements.txt"
+$runner = Join-Path $plugin 'bin/wiki_toolkit.py'
+& $python -I -B $runner setup --project "$project"
+```
 
-| Location | Contents |
+Review the preview, then apply it.
+
+```powershell
+& $python -I -B $runner setup --project "$project" --apply
+```
+
+Setup creates `.wiki/index.md` if there is no `.wiki/` and preserves any existing wiki and project instructions. If `.codex/config.toml` already exists, review and add the printed MCP registration by hand. If the registration conflicts with an existing one, review and reconcile the existing entry before applying setup again.
+
+Open a new Codex session from the project and trust the project if you want Codex to load its configuration. From the project root, `codex mcp get wiki_toolkit` shows the registration. Ask Codex to list your wiki pages to verify the server responds.
+
+The registration points to the toolkit runner and Python environment by absolute path. Keep both in place. If you move or replace that installation, update the registration in the project config. To disconnect the server, remove only the `[mcp_servers.wiki_toolkit]` table from the project config. Wiki files can be kept and used independently of the plugin.
+
+## MCP tools
+
+| Tool | Purpose |
 | --- | --- |
-| Wiki Toolkit | Generic templates and skills, setup and upgrade tools, MCP server, and tests with fictional data |
-| Project wiki | Project rules, notes, decisions, evidence, and version history |
-| Local runtime state | Work claims and reservations shared by worktrees of the same project |
+| `wiki_list` | List visible Markdown pages in the selected project wiki |
+| `wiki_read` | Read a range of lines from a UTF-8 Markdown page |
+| `wiki_search` | Find literal text in page names and contents, ignoring case |
 
-Each installation will select a project and wiki explicitly. A toolkit upgrade should preserve project content and settings. Project credentials belong in the project's secret store.
+The server runs over local stdio. It excludes hidden paths, symlinks, Windows junctions, hard-linked files, and files larger than 1 MiB. Search scans at most 250 pages per call. The server has no wiki write, Git publication, or coordinator tools. Wiki content is project-owned data and stays out of this distribution.
 
-## First release plan
+## Run tests
 
-1. Set up a new wiki or connect an existing one. Preview changes before applying them and verify rollback.
-2. Provide local wiki search and read tools through MCP. Add write support behind project-level configuration and the project's existing review process.
-3. Test setup and upgrade in a separate project. Verify that content survives the upgrade, worktrees share their project's claims when coordination is enabled, and an unrelated wiki stays out of reach.
+From the toolkit checkout, with its Python environment set up, run:
 
-Projects that already use a Coordinator will keep one authority for each shared resource. Wiki Toolkit will integrate with the existing authority where needed. Projects that share a resource must use the same authority for that resource.
+```powershell
+& $python -B -m unittest discover -s tests -v
+```
+
+The tests create disposable projects and use an MCP client to call the server over stdio.
 
 ## License
 
