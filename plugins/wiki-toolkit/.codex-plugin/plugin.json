@@ -1,12 +1,12 @@
 {
   "name": "wiki-toolkit",
   "version": "0.2.0",
-  "description": "Set up and read a project wiki through a local MCP server.",
+  "description": "Set up a project wiki with read access and optional profile-scoped writes.",
   "skills": "./skills/",
   "interface": {
     "displayName": "Wiki Toolkit",
     "shortDescription": "Set up, search, and read a project wiki",
-    "longDescription": "Connect Codex to a project wiki with project-local setup and three read-only MCP tools.",
+    "longDescription": "Connect Codex to a project wiki with read-only defaults, project profiles, and optional revision-checked writes.",
     "category": "Productivity"
   }
 }
