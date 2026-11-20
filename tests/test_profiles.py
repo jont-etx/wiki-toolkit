@@ -47,12 +47,14 @@ class ProfileTests(unittest.TestCase):
         return path
 
     @asynccontextmanager
-    async def connect(self, project):
+    async def connect(self, project, expected_instructions=None):
         config = tomllib.loads((project / ".codex/config.toml").read_text(encoding="utf-8"))
         self.assertEqual(set(config["mcp_servers"]), {"wiki"})
         async with stdio_client(StdioServerParameters(**config["mcp_servers"]["wiki"])) as (read, write):
             async with ClientSession(read, write) as session:
-                await session.initialize()
+                initialized = await session.initialize()
+                if expected_instructions is not None:
+                    self.assertEqual(initialized.instructions, expected_instructions)
                 yield session
 
     def test_profile_preview_and_invalid_profile_fail_before_writes(self):
@@ -215,7 +217,11 @@ class ProfileTests(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stderr)
 
         async def probe():
-            async with self.connect(self.project) as first, self.connect(worktree) as second:
+            instructions = "Verify the fixture claim before writing."
+            async with (
+                self.connect(self.project, instructions) as first,
+                self.connect(worktree, instructions) as second,
+            ):
                 tools = {tool.name: tool for tool in (await first.list_tools()).tools}
                 self.assertEqual(set(tools), {"wiki_list", "wiki_read",
                                               "wiki_write", "fixture_claim"})

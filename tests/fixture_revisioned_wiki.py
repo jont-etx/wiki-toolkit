@@ -13,7 +13,7 @@ if root != Path.cwd():
     raise RuntimeError("Fixture adapter cwd does not match the selected project")
 page = root / ".wiki/index.md"
 claims = set()
-server = FastMCP("Synthetic revisioned wiki")
+server = FastMCP("Synthetic revisioned wiki", instructions="Verify the fixture claim before writing.")
 
 
 @server.tool(annotations=ToolAnnotations(readOnlyHint=True))

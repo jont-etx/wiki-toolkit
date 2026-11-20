@@ -1,6 +1,6 @@
 {
   "name": "wiki-toolkit",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Set up a project wiki with read access and optional profile-scoped writes.",
   "skills": "./skills/",
   "interface": {

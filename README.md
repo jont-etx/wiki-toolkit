@@ -85,7 +85,7 @@ An optional `[adapter]` table delegates explicit tools to a trusted local MCP se
 
 Use `base_tools = []` to expose only the delegated tools. When an allowed adapter tool shares a name with a base tool, the adapter supplies that tool's input and output schemas, annotations, results, and errors. All allowlisted adapter tools must be present at startup. The server keeps that tool inventory until restart.
 
-The adapter runs with the launcher account's permissions. Only use profiles and executables you trust. The adapter enforces its own access, claims, write approvals, and revision checks. Choose one writer per profile. Built-in writes and adapter-provided write tools cannot be combined. Keep project profiles, policies, and runtime state in the owning project or its local environment.
+The adapter runs with the launcher account's permissions. Toolkit forwards its MCP initialization instructions. Only use profiles and executables you trust. The adapter enforces its own access, claims, write approvals, and revision checks. Choose one writer per profile. Built-in writes and adapter-provided write tools cannot be combined. Keep project profiles, policies, and runtime state in the owning project or its local environment.
 
 The tests include a synthetic revisioned wiki adapter. Its guarded writes run only against disposable fixtures. The base `wiki_read` retains line ranges, and an adapter may supply a different read contract, such as byte offsets plus revision tokens.
 
