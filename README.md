@@ -36,7 +36,7 @@ The registration points to the toolkit runner and Python environment by absolute
 | Tool | Purpose |
 | --- | --- |
 | `wiki_list` | List visible Markdown pages in the selected project wiki |
-| `wiki_read` | Read a range of lines from a UTF-8 Markdown page |
+| `wiki_read` | Read a range of lines and return the revision of a UTF-8 Markdown page |
 | `wiki_search` | Find literal text in page names and contents, ignoring case |
 
 The server runs over local stdio. It excludes hidden paths, symlinks, Windows junctions, hard-linked files, and files larger than 1 MiB. Search scans at most 250 pages per call. The default server exposes no wiki write, Git publication, or coordinator tools. Wiki content is project-owned data and stays out of this distribution.
@@ -62,13 +62,30 @@ Save the example as `.codex/wiki-toolkit/reader.toml` in the selected project, t
 
 Review the preview before applying. For an existing Codex config, merge the emitted registration yourself. If a server with the same name is already registered, review and update that entry explicitly. To revert, restore the previous registration table and reopen Codex in the project.
 
+### Enable scoped writes
+
+Add this table to a project profile to expose the built-in `wiki_write_preview` and `wiki_write` tools:
+
+```toml
+[write]
+paths = ["index.md", "notes/"]
+```
+
+Paths are relative to `.wiki/`. Use an exact Markdown filename or a directory prefix ending in `/`. Parent directories must already exist. Keep the base `wiki_read` tool available so clients can get the current revision.
+
+For an edit, read the page and pass the returned `revision` as `expected_revision`. For a new page, pass `"missing"`. Call `wiki_write_preview` with the path, proposed complete content, and expected revision to get a bounded diff without writing. Use those same inputs for `wiki_write`. A stale revision or a page that already exists when creation was requested is refused.
+
+Wiki Toolkit processes serialize writes within each checkout. The writer uses atomic replacement for existing pages and creation that refuses to overwrite an existing file. The writer manages `.codex/wiki-toolkit/.write.lock` as local runtime state. Keep it out of version control and leave it in place while a server is running. External editors do not participate in the lock. On Windows, replaced pages inherit directory permissions. Use an adapter when writes must preserve custom permissions on individual files.
+
+The profile opts into write access and sets its path scope. The preview is for review. Apply the project's approval process before calling the write tool. Projects requiring server-enforced claims or approvals can delegate writes to their own adapter.
+
 ### Project-owned MCP adapters
 
 An optional `[adapter]` table delegates explicit tools to a trusted local MCP server. Set `command` to the absolute executable path, `args` to a string array, and `tools` to the exact tool names the profile may expose. Set `[adapter.env]` only when the adapter needs environment variables. The value `"{project}"` expands to this launcher's selected project root. The adapter starts from that root over stdio.
 
 Use `base_tools = []` to expose only the delegated tools. When an allowed adapter tool shares a name with a base tool, the adapter supplies that tool's input and output schemas, annotations, results, and errors. All allowlisted adapter tools must be present at startup. The server keeps that tool inventory until restart.
 
-The adapter runs with the launcher account's permissions. Only use profiles and executables you trust. The adapter enforces its own access, claims, write approvals, and revision checks. Keep project policies, coordinator state, and any sensitive profile values in the owning project or its local environment.
+The adapter runs with the launcher account's permissions. Only use profiles and executables you trust. The adapter enforces its own access, claims, write approvals, and revision checks. Choose one writer per profile. Built-in writes and adapter-provided write tools cannot be combined. Keep project policies, coordinator state, and any sensitive profile values in the owning project or its local environment.
 
 The tests include a synthetic revisioned wiki adapter. Its guarded writes run only against disposable fixtures. The base `wiki_read` retains line ranges, and an adapter may supply a different read contract, such as byte offsets plus revision tokens.
 

@@ -2,13 +2,17 @@
 
 import argparse
 import asyncio
+from contextlib import contextmanager
 from datetime import timedelta
+from difflib import unified_diff
+from hashlib import sha256
 import json
 import os
 from pathlib import Path
 import re
 import stat
 import sys
+import tempfile
 import tomllib
 from typing import Any
 
@@ -16,6 +20,8 @@ SERVER_NAME = "wiki_toolkit"
 BASE_TOOLS = ("wiki_list", "wiki_read", "wiki_search")
 CONFIG_NAME = re.compile(r"[A-Za-z0-9_][A-Za-z0-9_-]{0,99}")
 ENV_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+REVISION = re.compile(r"[0-9a-f]{64}")
+WRITER_TOOLS = {"wiki_write", "wiki_write_preview"}
 MAX_BYTES = 1_048_576
 MAX_SCAN = 250
 MAX_LINES = 200
@@ -52,7 +58,7 @@ def toml_string(value):
 
 def load_profile(project, name):
     if name is None:
-        return SERVER_NAME, BASE_TOOLS, None
+        return SERVER_NAME, BASE_TOOLS, (), None
     if not CONFIG_NAME.fullmatch(name):
         raise ValueError("Invalid Wiki Toolkit profile name.")
     codex = project / ".codex"
@@ -66,7 +72,7 @@ def load_profile(project, name):
     version = config.get("version")
     if type(version) is not int or version != 1:
         raise ValueError("Wiki Toolkit profiles require version = 1.")
-    if config.keys() - {"version", "server_name", "base_tools", "adapter"}:
+    if config.keys() - {"version", "server_name", "base_tools", "write", "adapter"}:
         raise ValueError("Unknown Wiki Toolkit profile setting.")
     server_name = config.get("server_name", SERVER_NAME)
     if not isinstance(server_name, str) or not CONFIG_NAME.fullmatch(server_name):
@@ -80,11 +86,15 @@ def load_profile(project, name):
     ):
         raise ValueError("Profile base_tools must contain unique built-in wiki tool names.")
 
+    paths = write_scope(config)
+    if paths and "wiki_read" not in selected:
+        raise ValueError("Built-in writes require the base wiki_read tool for revisions.")
+
     adapter = config.get("adapter")
     if adapter is None:
         if not selected:
             raise ValueError("A profile without an adapter must expose at least one base tool.")
-        return server_name, selected, None
+        return server_name, selected, paths, None
     if not isinstance(adapter, dict) or adapter.keys() - {"command", "args", "env", "tools"}:
         raise ValueError("Invalid adapter settings in profile.")
     command = adapter.get("command")
@@ -104,7 +114,9 @@ def load_profile(project, name):
         not isinstance(tool, str) or not CONFIG_NAME.fullmatch(tool) for tool in tools
     ) or len(set(tools)) != len(tools):
         raise ValueError("Adapter tools must be a nonempty array of unique tool names.")
-    return server_name, selected, {"command": command, "args": args, "env": env, "tools": tools}
+    if paths and (WRITER_TOOLS | {"wiki_read"}).intersection(tools):
+        raise ValueError("A profile must choose either the built-in writer or adapter write tools.")
+    return server_name, selected, paths, {"command": command, "args": args, "env": env, "tools": tools}
 
 
 def config_for(project, profile, server_name):
@@ -123,7 +135,7 @@ def create_text(path, content):
         stream.write(content)
 
 
-def setup(project, apply, profile, server_name):
+def setup(project, apply, profile, server_name, paths):
     wiki = project / ".wiki"
     codex = project / ".codex"
     config = codex / "config.toml"
@@ -155,6 +167,8 @@ def setup(project, apply, profile, server_name):
     print(f".wiki/: {'use existing directory' if has_wiki else 'create with index.md'}")
     if profile is not None:
         print(f"Project profile: {profile}")
+    if paths:
+        print(f"Built-in write paths: {', '.join(paths)}")
     print(f".codex/config.toml: {action} {server_name} registration")
     if not apply or action == "add manually":
         print(f"\n{snippet}", end="")
@@ -189,7 +203,7 @@ def wiki_parts(relative):
     return parts
 
 
-def document(wiki, relative):
+def document(wiki, relative, *, allow_missing=False):
     parts = wiki_parts(relative)
     plain_path(wiki, directory=True)
     path = wiki
@@ -197,17 +211,31 @@ def document(wiki, relative):
         path /= folder
         plain_path(path, directory=True)
     path /= parts[-1]
-    if plain_path(path, directory=False).st_size > MAX_BYTES:
+    try:
+        info = plain_path(path, directory=False)
+    except FileNotFoundError:
+        if allow_missing:
+            return path
+        raise
+    if info.st_size > MAX_BYTES:
         raise ValueError("Wiki page exceeds 1 MiB.")
     return path
 
 
-def page_lines(path):
+def page_bytes(path):
+    info = plain_path(path, directory=False)
     with path.open("rb") as stream:
+        opened = os.fstat(stream.fileno())
+        if not os.path.samestat(info, opened) or opened.st_nlink != 1:
+            raise ValueError("Wiki page changed while opening.")
         contents = stream.read(MAX_BYTES + 1)
     if len(contents) > MAX_BYTES:
         raise ValueError("Wiki page exceeds 1 MiB.")
-    return contents.decode("utf-8-sig").splitlines()
+    return contents
+
+
+def page_lines(path):
+    return page_bytes(path).decode("utf-8-sig").splitlines()
 
 
 def documents(wiki):
@@ -232,7 +260,151 @@ def documents(wiki):
                 continue
 
 
-def base_server(project):
+def write_scope(config):
+    options = config.get("write")
+    if options is None:
+        return ()
+    if not isinstance(options, dict) or options.keys() != {"paths"}:
+        raise ValueError("The write table requires only a paths array.")
+    paths = options["paths"]
+    if not isinstance(paths, list) or not paths or any(not isinstance(path, str) for path in paths):
+        raise ValueError("Write paths must be a nonempty array of wiki-relative paths.")
+    for path in paths:
+        wiki_parts(path + "page.md" if path.endswith("/") else path)
+    return tuple(paths)
+
+
+@contextmanager
+def write_lock(project):
+    config = project / ".codex"
+    directory = config / "wiki-toolkit"
+    for parent in (config, directory):
+        plain_path(parent, directory=True)
+    path = directory / ".write.lock"
+    exists_plain(path, directory=False)
+    with path.open("a+b") as lock:
+        if not os.path.samestat(os.fstat(lock.fileno()), plain_path(path, directory=False)):
+            raise ValueError("Wiki write lock changed while opening.")
+        if os.name == "nt":
+            import msvcrt
+
+            lock.seek(0)
+            msvcrt.locking(lock.fileno(), msvcrt.LK_LOCK, 1)
+        else:
+            import fcntl
+
+            fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+        if not os.path.samestat(os.fstat(lock.fileno()), plain_path(path, directory=False)):
+            raise ValueError("Wiki write lock changed while acquiring it.")
+        yield
+
+
+def revision(content):
+    return "missing" if content is None else sha256(content).hexdigest()
+
+
+def checked_page(wiki, relative, expected):
+    path = document(wiki, relative, allow_missing=True)
+    try:
+        current = page_bytes(path)
+    except FileNotFoundError:
+        current = None
+    if revision(current) != expected:
+        raise ValueError("Wiki revision changed. Read the page again before writing.")
+    if current is not None:
+        current.decode("utf-8")
+    return path, current
+
+
+def update_page(wiki, relative, expected, content):
+    path, current = checked_page(wiki, relative, expected)
+    if current == content:
+        return False
+    temporary = None
+    try:
+        with tempfile.NamedTemporaryFile(dir=path.parent, prefix=".wiki-toolkit-", delete=False) as file:
+            temporary = Path(file.name)
+            file.write(content)
+            file.flush()
+            os.fsync(file.fileno())
+        if current is not None and os.name != "nt":
+            os.chmod(temporary, stat.S_IMODE(plain_path(path, directory=False).st_mode))
+        checked_page(wiki, relative, expected)
+        if current is None:
+            try:
+                if os.name == "nt":
+                    os.rename(temporary, path)
+                else:
+                    os.link(temporary, path)
+            except FileExistsError as error:
+                raise ValueError("Wiki revision changed. Read the page again before writing.") from error
+        else:
+            os.replace(temporary, path)
+    finally:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
+    return True
+
+
+def preview_diff(path, current, content):
+    before = (current or b"").decode("utf-8-sig").splitlines()
+    after = content.decode("utf-8-sig").splitlines()
+    if before == after and current is not None and current != content:
+        return "Only line endings or the UTF-8 byte order mark changed.", False
+    if len(before) + len(after) > 4_000:
+        return "", True
+    remaining = 16_000
+    chunks = []
+    for line in unified_diff(before, after, fromfile=path, tofile=path, lineterm=""):
+        if len(line) + 1 > remaining:
+            chunks.append(line[:remaining])
+            return "\n".join(chunks), True
+        chunks.append(line)
+        remaining -= len(line) + 1
+    return "\n".join(chunks), False
+
+
+def register_writer(server, project, wiki, paths, read_only):
+    from mcp.types import ToolAnnotations
+
+    def validate(path, content, expected_revision):
+        wiki_parts(path)
+        if not any(path.startswith(scope) if scope.endswith("/") else path == scope for scope in paths):
+            raise ValueError("Page is outside the profile's write paths.")
+        if expected_revision != "missing" and not REVISION.fullmatch(expected_revision):
+            raise ValueError("Supply a page revision or 'missing' when creating a page.")
+        data = content.encode("utf-8")
+        if len(data) > MAX_BYTES:
+            raise ValueError("Wiki page exceeds 1 MiB.")
+        return data
+
+    @server.tool(annotations=read_only)
+    def wiki_write_preview(path: str, content: str, expected_revision: str) -> dict[str, Any]:
+        """Preview replacement of one Markdown page using its revision, or 'missing' for creation."""
+        data = validate(path, content, expected_revision)
+        _, current = checked_page(wiki, path, expected_revision)
+        diff, truncated = preview_diff(path, current, data)
+        return {
+            "path": path,
+            "expected_revision": expected_revision,
+            "new_revision": revision(data),
+            "changed": current != data,
+            "diff": diff,
+            "diff_truncated": truncated,
+        }
+
+    @server.tool(annotations=ToolAnnotations(
+        readOnlyHint=False, destructiveHint=True, idempotentHint=False, openWorldHint=False,
+    ))
+    def wiki_write(path: str, content: str, expected_revision: str) -> dict[str, Any]:
+        """Replace one allowed Markdown page if its revision matches, or create it with 'missing'."""
+        data = validate(path, content, expected_revision)
+        with write_lock(project):
+            changed = update_page(wiki, path, expected_revision, data)
+        return {"path": path, "revision": revision(data), "changed": changed}
+
+
+def base_server(project, write_paths):
     from mcp.server.fastmcp import FastMCP
     from mcp.types import ToolAnnotations
 
@@ -259,7 +431,8 @@ def base_server(project):
         if start_line < 1 or not 1 <= line_count <= MAX_LINES:
             raise ValueError(f"Use start_line >= 1 and line_count between 1 and {MAX_LINES}.")
         try:
-            lines = page_lines(document(wiki, path))
+            content = page_bytes(document(wiki, path))
+            lines = content.decode("utf-8-sig").splitlines()
         except (OSError, UnicodeError):
             raise ValueError("Wiki page is unavailable or is not UTF-8 Markdown.") from None
         selected = lines[start_line - 1:start_line - 1 + line_count]
@@ -267,6 +440,7 @@ def base_server(project):
             "path": path,
             "start_line": start_line,
             "total_lines": len(lines),
+            "revision": revision(content),
             "text": "\n".join(line[:MAX_LINE_LENGTH] for line in selected),
             "lines_clipped": any(len(line) > MAX_LINE_LENGTH for line in selected),
         }
@@ -297,6 +471,8 @@ def base_server(project):
                 return {"matches": matches, "more": True}
         return {"matches": matches, "more": False}
 
+    if write_paths:
+        register_writer(server, project, wiki, write_paths, read_only)
     return server
 
 
@@ -372,11 +548,11 @@ def main():
     try:
         project = options.project.resolve(strict=True)
         plain_path(project, directory=True)
-        server_name, selected, adapter = load_profile(project, options.profile)
+        server_name, selected, write_paths, adapter = load_profile(project, options.profile)
         if options.command == "setup":
-            setup(project, options.apply, options.profile, server_name)
+            setup(project, options.apply, options.profile, server_name, write_paths)
         else:
-            server = base_server(project)
+            server = base_server(project, write_paths)
             for tool in BASE_TOOLS:
                 if tool not in selected:
                     server.remove_tool(tool)

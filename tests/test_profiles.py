@@ -113,22 +113,102 @@ class ProfileTests(unittest.TestCase):
         self.assertEqual(set(servers), {"wiki_toolkit"})
         self.assertNotIn("--profile", servers["wiki_toolkit"]["args"])
 
-    def test_profiles_preserve_contracts_and_bind_to_each_worktree(self):
+    def setup_writer(self):
+        config = self.project / ".codex/wiki-toolkit"
+        config.mkdir(parents=True)
+        (config / "writer.toml").write_text(
+            'version = 1\nserver_name = "wiki"\n[write]\npaths = ["notes/", "index.md"]\n',
+            encoding="utf-8",
+        )
+        result = self.run_tool(self.project, "--profile", "writer", "--apply")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        wiki = self.project / ".wiki"
+        (wiki / "notes").mkdir()
+        (wiki / "other.md").write_text("# Private scope", encoding="utf-8")
+        os.link(wiki / "other.md", wiki / "notes/linked.md")
+        return wiki
+
+    def test_builtin_write_preview_scope_and_revision(self):
+        wiki = self.setup_writer()
+        index = wiki / "index.md"
+        original = index.read_bytes()
+
+        async def probe():
+            async with self.connect(self.project) as session:
+                tools = {tool.name: tool for tool in (await session.list_tools()).tools}
+                self.assertTrue(tools["wiki_write_preview"].annotations.readOnlyHint)
+                self.assertFalse(tools["wiki_write"].annotations.readOnlyHint)
+                page = await session.call_tool("wiki_read", {"path": "index.md"})
+                revision = page.structuredContent["revision"]
+                args = {"path": "index.md", "content": "# Updated\n", "expected_revision": revision}
+                preview = await session.call_tool("wiki_write_preview", args)
+                self.assertIn("+# Updated", preview.structuredContent["diff"])
+                self.assertEqual(index.read_bytes(), original)
+                self.assertFalse((self.project / ".codex/wiki-toolkit/.write.lock").exists())
+                changed = await session.call_tool("wiki_write", args)
+                self.assertFalse(changed.isError, str(changed))
+                self.assertEqual(changed.structuredContent["revision"], preview.structuredContent["new_revision"])
+                self.assertEqual(index.read_bytes(), b"# Updated\n")
+                stale = await session.call_tool("wiki_write", args)
+                self.assertTrue(stale.isError)
+                self.assertIn("revision", stale.content[0].text)
+                newline = await session.call_tool("wiki_write_preview", {
+                    **args, "content": "# Updated", "expected_revision": changed.structuredContent["revision"],
+                })
+                self.assertTrue(newline.structuredContent["changed"])
+                self.assertIn("line endings", newline.structuredContent["diff"])
+
+                create = {"path": "notes/new.md", "content": "# New", "expected_revision": "missing"}
+                written = await session.call_tool("wiki_write", create)
+                self.assertFalse(written.isError, str(written))
+                self.assertEqual((wiki / "notes/new.md").read_bytes(), b"# New")
+                self.assertTrue((await session.call_tool("wiki_write", create)).isError)
+                for path in ("other.md", "notes-sibling/refused.md", "../outside.md", "notes/linked.md"):
+                    with self.subTest(path=path):
+                        blocked = await session.call_tool("wiki_write", {**create, "path": path})
+                        self.assertTrue(blocked.isError)
+                self.assertEqual((wiki / "other.md").read_text(encoding="utf-8"), "# Private scope")
+        asyncio.run(asyncio.wait_for(probe(), 25))
+
+    def test_two_servers_cannot_write_the_same_revision(self):
+        wiki = self.setup_writer()
+        sibling_page = self.linked_worktree() / ".wiki/index.md"
+        sibling_original = sibling_page.read_bytes()
+
+        async def probe():
+            async with self.connect(self.project) as first, self.connect(self.project) as second:
+                page = await first.call_tool("wiki_read", {"path": "index.md"})
+                args = {"path": "index.md", "expected_revision": page.structuredContent["revision"]}
+                results = await asyncio.gather(
+                    first.call_tool("wiki_write", {**args, "content": "# First"}),
+                    second.call_tool("wiki_write", {**args, "content": "# Second"}),
+                )
+                self.assertEqual(sum(not result.isError for result in results), 1)
+                winner = "# Second" if results[0].isError else "# First"
+                self.assertEqual((wiki / "index.md").read_text(encoding="utf-8"), winner)
+                self.assertEqual(sibling_page.read_bytes(), sibling_original)
+        asyncio.run(asyncio.wait_for(probe(), 25))
+
+    def linked_worktree(self):
         def git(*args):
             subprocess.run(
                 ["git", "-C", str(self.project), *args], check=True, capture_output=True, timeout=20,
             )
 
         wiki = self.project / ".wiki"
-        wiki.mkdir()
-        (wiki / "index.md").write_text("# Synthetic wiki\n", encoding="utf-8")
+        wiki.mkdir(exist_ok=True)
+        if not (wiki / "index.md").exists():
+            (wiki / "index.md").write_text("# Synthetic wiki\n", encoding="utf-8")
         git("init", "--quiet")
         git("add", ".wiki/index.md")
         git("-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid",
             "-c", "commit.gpgsign=false", "commit", "--quiet", "-m", "fixture")
         worktree = self.root / "second worktree"
         git("worktree", "add", "--quiet", "--detach", str(worktree), "HEAD")
+        return worktree
 
+    def test_profiles_preserve_contracts_and_bind_to_each_worktree(self):
+        worktree = self.linked_worktree()
         for project in (self.project, worktree):
             self.profile(project)
             result = self.run_tool(project, "--profile", "revisioned", "--apply")
