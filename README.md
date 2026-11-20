@@ -39,7 +39,7 @@ The registration points to the toolkit runner and Python environment by absolute
 | `wiki_read` | Read a range of lines and return the revision of a UTF-8 Markdown page |
 | `wiki_search` | Find literal text in page names and contents, ignoring case |
 
-The server runs over local stdio. It excludes hidden paths, symlinks, Windows junctions, hard-linked files, and files larger than 1 MiB. Search scans at most 250 pages per call. The default server exposes no wiki write, Git publication, or coordinator tools. Wiki content is project-owned data and stays out of this distribution.
+The server runs over local stdio. It excludes hidden paths, symlinks, Windows junctions, hard-linked files, and files larger than 1 MiB. Search scans at most 250 pages per call. The default server exposes only list, read, and search. Wiki content is project-owned data and stays out of this distribution.
 
 ## Project profiles
 
@@ -85,7 +85,7 @@ An optional `[adapter]` table delegates explicit tools to a trusted local MCP se
 
 Use `base_tools = []` to expose only the delegated tools. When an allowed adapter tool shares a name with a base tool, the adapter supplies that tool's input and output schemas, annotations, results, and errors. All allowlisted adapter tools must be present at startup. The server keeps that tool inventory until restart.
 
-The adapter runs with the launcher account's permissions. Only use profiles and executables you trust. The adapter enforces its own access, claims, write approvals, and revision checks. Choose one writer per profile. Built-in writes and adapter-provided write tools cannot be combined. Keep project policies, coordinator state, and any sensitive profile values in the owning project or its local environment.
+The adapter runs with the launcher account's permissions. Only use profiles and executables you trust. The adapter enforces its own access, claims, write approvals, and revision checks. Choose one writer per profile. Built-in writes and adapter-provided write tools cannot be combined. Keep project profiles, policies, and runtime state in the owning project or its local environment.
 
 The tests include a synthetic revisioned wiki adapter. Its guarded writes run only against disposable fixtures. The base `wiki_read` retains line ranges, and an adapter may supply a different read contract, such as byte offsets plus revision tokens.
 

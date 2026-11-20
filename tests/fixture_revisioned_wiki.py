@@ -28,7 +28,7 @@ def wiki_read(path: str, offset: int = 0, revision: str = "") -> dict[str, Any]:
 
 
 @server.tool(annotations=ToolAnnotations(readOnlyHint=False))
-def coordinator_call(operation: str, session_id: str) -> dict[str, Any]:
+def fixture_claim(operation: str, session_id: str) -> dict[str, Any]:
     if operation != "claim":
         raise ValueError("UNKNOWN_OPERATION")
     claims.add(session_id)

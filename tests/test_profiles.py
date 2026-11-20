@@ -40,7 +40,7 @@ class ProfileTests(unittest.TestCase):
             'version = 1\nserver_name = "wiki"\nbase_tools = ["wiki_list"]\n\n[adapter]\n'
             f'command = {json.dumps(sys.executable)}\n'
             f'args = {json.dumps(["-I", "-B", str(ADAPTER)])}\n'
-            f'tools = {json.dumps(tools or ["wiki_read", "wiki_write", "coordinator_call"])}\n'
+            f'tools = {json.dumps(tools or ["wiki_read", "wiki_write", "fixture_claim"])}\n'
             '\n[adapter.env]\nFIXTURE_WIKI_ROOT = "{project}"\n',
             encoding="utf-8",
         )
@@ -218,7 +218,7 @@ class ProfileTests(unittest.TestCase):
             async with self.connect(self.project) as first, self.connect(worktree) as second:
                 tools = {tool.name: tool for tool in (await first.list_tools()).tools}
                 self.assertEqual(set(tools), {"wiki_list", "wiki_read",
-                                              "wiki_write", "coordinator_call"})
+                                              "wiki_write", "fixture_claim"})
                 self.assertIn("offset", tools["wiki_read"].inputSchema["properties"])
                 self.assertTrue(tools["wiki_read"].annotations.readOnlyHint)
                 self.assertFalse(tools["wiki_write"].annotations.readOnlyHint)
@@ -236,7 +236,7 @@ class ProfileTests(unittest.TestCase):
                 denied = await first.call_tool("wiki_write", args)
                 self.assertTrue(denied.isError)
                 self.assertIn("CLAIM_REQUIRED", denied.content[0].text)
-                claim = await first.call_tool("coordinator_call", {"operation": "claim", "session_id": "fixture"})
+                claim = await first.call_tool("fixture_claim", {"operation": "claim", "session_id": "fixture"})
                 self.assertEqual(claim.structuredContent, {"claimed": True})
                 stale = await first.call_tool("wiki_write", {**args, "expected_revision": "stale"})
                 self.assertTrue(stale.isError)
