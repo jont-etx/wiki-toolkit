@@ -36,6 +36,7 @@ class WikiToolkitTests(unittest.TestCase):
         result = self.run_tool("setup", "--apply")
         self.assertEqual(result.returncode, 0, result.stderr)
         wiki = self.project / ".wiki/index.md"
+        self.assertEqual({page.name for page in wiki.parent.iterdir()}, {"index.md"})
         wiki.write_text("# My notes", encoding="utf-8")
         config = self.project / ".codex/config.toml"
         original = config.read_bytes()
@@ -44,6 +45,44 @@ class WikiToolkitTests(unittest.TestCase):
         self.assertEqual(config.read_bytes(), original)
         self.assertEqual(wiki.read_text(encoding="utf-8"), "# My notes")
         self.assertEqual(guide.read_text(encoding="utf-8"), "Existing instructions")
+
+    def test_setup_planning_templates_preview_apply_and_preserve_edits(self):
+        wiki = self.project / ".wiki"
+        names = {"memo.md", "spec.md", "plan.md", "decisions.md", "gotchas.md"}
+        result = self.run_tool("setup", "--with-planning")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        for name in names:
+            self.assertIn(f".wiki/{name}: create", result.stdout)
+        self.assertFalse(wiki.exists())
+        self.assertFalse((self.project / ".codex").exists())
+
+        result = self.run_tool("setup", "--with-planning", "--apply")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual({page.name for page in wiki.iterdir()}, names | {"index.md"})
+        self.assertIn("Success criteria", (wiki / "memo.md").read_text(encoding="utf-8"))
+
+        spec = wiki / "spec.md"
+        spec.write_text("Existing spec", encoding="utf-8")
+        (wiki / "plan.md").unlink()
+        result = self.run_tool("setup", "--with-planning", "--apply")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn(".wiki/spec.md: keep", result.stdout)
+        self.assertIn(".wiki/plan.md: create", result.stdout)
+        self.assertEqual(spec.read_text(encoding="utf-8"), "Existing spec")
+        self.assertTrue((wiki / "plan.md").is_file())
+
+    def test_setup_planning_refuses_linked_template_path(self):
+        wiki = self.project / ".wiki"
+        wiki.mkdir()
+        outside = self.project.parent / "outside.md"
+        outside.write_text("Outside wiki", encoding="utf-8")
+        os.link(outside, wiki / "spec.md")
+        result = self.run_tool("setup", "--with-planning", "--apply")
+        self.assertNotEqual(result.returncode, 0, result.stderr)
+        self.assertIn("hard links", result.stderr)
+        self.assertEqual(list(wiki.iterdir()), [wiki / "spec.md"])
+        self.assertEqual(outside.read_text(encoding="utf-8"), "Outside wiki")
+        self.assertFalse((self.project / ".codex").exists())
 
     def test_setup_leaves_existing_config_for_review(self):
         config = self.project / ".codex/config.toml"

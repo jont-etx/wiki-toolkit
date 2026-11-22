@@ -27,6 +27,27 @@ Review the preview, then apply it.
 
 Setup creates `.wiki/index.md` if there is no `.wiki/` and preserves any existing wiki and project instructions. If `.codex/config.toml` already exists, review and add the printed MCP registration by hand. If the registration conflicts with an existing one, review and reconcile the existing entry before applying setup again.
 
+### Optional project planning templates
+
+When you ask Codex to set up a new wiki using the Wiki Toolkit skill, it offers
+a basic wiki or a wiki with project planning templates. To choose the templates
+from PowerShell, add `--with-planning` to both commands.
+
+```powershell
+& $python -I -B $runner setup --project "$project" --with-planning
+# Review the preview before applying.
+& $python -I -B $runner setup --project "$project" --with-planning --apply
+```
+
+The templates are stored in the project's `.wiki/`. Start with `memo.md` for
+purpose, audience, scope, and success criteria. Use `spec.md` for expected
+behavior and acceptance criteria, `plan.md` for milestones and verification,
+`decisions.md` for dated decisions, and `gotchas.md` for known pitfalls. You
+can add the templates to an existing wiki with the same commands. The preview
+lists which pages setup will create or keep. Existing pages are preserved.
+
+### Verify your connection
+
 Open a new Codex session from the project and trust the project if you want Codex to load its configuration. From the project root, `codex mcp get wiki_toolkit` shows the registration. Ask Codex to list your wiki pages to verify the server responds.
 
 The registration points to the toolkit runner and Python environment by absolute path. Keep both in place. If you move or replace that installation, update the registration in the project config. To disconnect the server, remove only the `[mcp_servers.wiki_toolkit]` table from the project config. Wiki files can be kept and used independently of the plugin.

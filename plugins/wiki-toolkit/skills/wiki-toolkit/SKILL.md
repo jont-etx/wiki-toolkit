@@ -1,6 +1,6 @@
 ---
 name: wiki-toolkit
-description: Set up a project wiki, find Markdown notes, or edit pages when the project profile enables writes.
+description: Set up a project wiki, find Markdown notes, or edit pages when the project profile enables writes. If the user requests a new wiki without choosing a setup, ask "Would you like a basic wiki or one with planning templates (memo, spec, plan, decisions, and gotchas)?" before running tools.
 ---
 
 # Wiki Toolkit
@@ -19,7 +19,12 @@ revision changed, read the page again and review a new diff before writing.
 For adapter-provided tools, follow the project's tool contract and approvals.
 
 For setup, identify the exact existing project directory and confirm the
-desired scope is that project's `.wiki/`. The package's
+desired scope is that project's `.wiki/`. When setting up a new wiki, ask
+whether the user wants a basic wiki or a wiki with project planning templates
+(memo, spec, plan, decisions, and gotchas). If the user already chose, use that
+choice. Wait for their answer before running setup commands. Add
+`--with-planning` only if the user chooses the templates, and use
+the same option for preview and apply. The package's
 `../../bin/wiki_toolkit.py` script takes an explicit project path. Use Python
 3.11+ with the MCP dependency from `../../requirements.txt`. Run the setup
 command without `--apply` to preview. Run with `--apply` when the user has

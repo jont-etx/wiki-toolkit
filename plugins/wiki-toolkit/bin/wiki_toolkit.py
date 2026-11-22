@@ -30,6 +30,55 @@ WINDOWS_DEVICES = {"CON", "PRN", "AUX", "NUL", "CONIN$", "CONOUT$"} | {
     f"{prefix}{digit}" for prefix in ("COM", "LPT") for digit in "123456789¹²³"
 }
 INDEX = "# Project wiki\n\nAdd project notes, decisions, and evidence as Markdown.\n"
+PLANNING_TEMPLATES = {
+    "memo.md": """# Project memo
+
+Agree on the purpose and scope before writing the [spec](spec.md) and [plan](plan.md).
+
+## Purpose and audience
+
+## In scope
+
+## Out of scope
+
+## Success criteria
+
+## Smallest useful proof
+""",
+    "spec.md": """# Project specification
+
+Use the [memo](memo.md) to define the intended behavior and how to verify it.
+
+## Expected behavior
+
+## Design and constraints
+
+## Acceptance criteria
+
+## Open questions
+""",
+    "plan.md": """# Delivery plan
+
+Sequence the work from the [spec](spec.md), starting with the smallest useful proof.
+
+## Current status and next step
+
+## Milestones and exit criteria
+
+## Dependencies and blockers
+
+## Verification
+""",
+    "decisions.md": """# Decisions
+
+Append dated entries with the decision, rationale, and any follow-up.
+Link to a new entry when it supersedes an earlier decision.
+""",
+    "gotchas.md": """# Gotchas
+
+Record recurring pitfalls with a symptom, cause, and workaround or verification step.
+""",
+}
 
 
 def plain_path(path, *, directory):
@@ -135,11 +184,15 @@ def create_text(path, content):
         stream.write(content)
 
 
-def setup(project, apply, profile, server_name, paths):
+def setup(project, apply, profile, server_name, paths, *, with_planning):
     wiki = project / ".wiki"
     codex = project / ".codex"
     config = codex / "config.toml"
     has_wiki = exists_plain(wiki, directory=True)
+    planning_pages = {
+        name: has_wiki and exists_plain(wiki / name, directory=False)
+        for name in PLANNING_TEMPLATES
+    } if with_planning else {}
     has_codex = exists_plain(codex, directory=True)
     has_config = has_codex and exists_plain(config, directory=False)
     snippet = config_for(project, profile, server_name)
@@ -165,6 +218,8 @@ def setup(project, apply, profile, server_name, paths):
 
     print(f"{'Setup' if apply else 'Preview'} for {project}")
     print(f".wiki/: {'use existing directory' if has_wiki else 'create with index.md'}")
+    for name, exists in planning_pages.items():
+        print(f".wiki/{name}: {'keep' if exists else 'create'}")
     if profile is not None:
         print(f"Project profile: {profile}")
     if paths:
@@ -180,6 +235,11 @@ def setup(project, apply, profile, server_name, paths):
     if not has_wiki:
         wiki.mkdir()
         create_text(wiki / "index.md", INDEX)
+    if planning_pages:
+        plain_path(wiki, directory=True)
+        for name, exists in planning_pages.items():
+            if not exists:
+                create_text(wiki / name, PLANNING_TEMPLATES[name])
     if action == "create":
         codex.mkdir(exist_ok=True)
         plain_path(codex, directory=True)
@@ -547,13 +607,15 @@ def main():
         sub.add_argument("--profile", help="Name under the project .codex/wiki-toolkit directory")
         if command == "setup":
             sub.add_argument("--apply", action="store_true")
+            sub.add_argument("--with-planning", action="store_true", help="Include project planning templates")
     options = parser.parse_args()
     try:
         project = options.project.resolve(strict=True)
         plain_path(project, directory=True)
         server_name, selected, write_paths, adapter = load_profile(project, options.profile)
         if options.command == "setup":
-            setup(project, options.apply, options.profile, server_name, write_paths)
+            setup(project, options.apply, options.profile, server_name, write_paths,
+                  with_planning=options.with_planning)
         else:
             server = base_server(project, write_paths)
             for tool in BASE_TOOLS:
